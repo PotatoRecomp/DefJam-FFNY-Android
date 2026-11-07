@@ -57,31 +57,37 @@ constexpr uint32_t kInfiniteStoryPointsVal = 999999;
 // 0x153C: Jewelry (chains, pendants, watches, rings, earrings)
 // 0x1594: Clothes (shirts, pants, shoes, hats, etc.)
 // 0x15EC: Tattoos (arms, legs, back, chest, etc.)
-// 0x1644: Moves (fighting styles, blazing moves)
 // 0x169C: Voices / Bling
-constexpr uint32_t kShopContainers[] = {0x14E4, 0x153C, 0x1594, 0x15EC, 0x1644, 0x169C};
+// Note: Moves container 0x1644 (fighting styles, blazing moves) is excluded so story style progression is untouched.
+constexpr uint32_t kShopContainers[] = {0x14E4, 0x153C, 0x1594, 0x15EC, 0x169C};
 constexpr uint32_t kDebugFlags = 0x2FB1F0;
 
 void UnlockContainer(uint32_t container, uint8_t val, uint32_t start_idx = 0) {
     if (!container) return;
     uint32_t count = kernel::R32(container + 0x08);
     if (!count || count > 5000) return;
-    uint32_t ptr = kernel::R32(container + 0x4C);
-    if (!ptr) return;
-    uint32_t buf_idx = kernel::R32(ptr);
-    if (buf_idx > 15) buf_idx = 0;
-    uint32_t buf = kernel::R32(container + buf_idx * 4 + 0x0C);
-    if (!buf) return;
     uint8_t mask = kernel::G<uint8_t>(container + 0x50);
     if (!mask) mask = 3;
 
-    for (uint32_t i = start_idx; i < count; i++) {
-        uint32_t byte_idx = i >> 2;
-        uint32_t shift = (i & 3) << 1;
-        uint8_t cur = kernel::G<uint8_t>(buf + byte_idx);
-        cur &= ~(mask << shift);
-        cur |= (val & mask) << shift;
-        kernel::G<uint8_t>(buf + byte_idx) = cur;
+    auto unlock_buf = [&](uint32_t buf) {
+        if (!buf) return;
+        for (uint32_t i = start_idx; i < count; i++) {
+            uint32_t byte_idx = i >> 2;
+            uint32_t shift = (i & 3) << 1;
+            uint8_t cur = kernel::G<uint8_t>(buf + byte_idx);
+            cur &= ~(mask << shift);
+            cur |= (val & mask) << shift;
+            kernel::G<uint8_t>(buf + byte_idx) = cur;
+        }
+    };
+
+    uint32_t ptr = kernel::R32(container + 0x4C);
+    uint32_t buf_idx = ptr ? kernel::R32(ptr) : 0;
+    if (buf_idx > 15) buf_idx = 0;
+    unlock_buf(kernel::R32(container + buf_idx * 4 + 0x0C));
+
+    for (uint32_t i = 0; i < kStorySlots; i++) {
+        unlock_buf(kernel::R32(container + i * 4 + 0x0C));
     }
 }
 
@@ -91,36 +97,62 @@ void RepairStoryStyles(uint32_t data = 0) {
     uint32_t profile = kernel::R32(data + 4);
     if (!profile) return;
 
-    uint32_t container = profile + 0x1644;
-    uint32_t count = kernel::R32(container + 0x08);
-    if (!count) return;
-    uint32_t ptr = kernel::R32(container + 0x4C);
-    if (!ptr) return;
-    uint32_t buf_idx = kernel::R32(ptr);
-    if (buf_idx > 15) buf_idx = 0;
-    uint32_t buf = kernel::R32(container + buf_idx * 4 + 0x0C);
-    if (!buf) return;
+    auto repair_styles_container = [&](uint32_t container) {
+        uint32_t count = kernel::R32(container + 0x08);
+        if (!count) return;
 
-    uint32_t active = kernel::R32(profile + kActiveStorySlot);
-    if (active >= kStorySlots) return;
-    uint32_t rec = profile + kStoryRecordBase + active * kStoryRecordSize;
+        auto repair_slot = [&](uint32_t buf, uint32_t rec) {
+            if (!buf || !rec) return;
+            uint8_t s0 = kernel::G<uint8_t>(rec + 0x140);
+            uint8_t s1 = kernel::G<uint8_t>(rec + 0x141);
+            uint8_t s2 = kernel::G<uint8_t>(rec + 0x142);
 
-    if (kernel::G<uint8_t>(rec + 0x08) == 0 && kernel::G<uint8_t>(rec + 0x09) == 0 &&
-        kernel::R32(rec + kStoryCashOffset) == 0 && kernel::R32(rec + kStoryDevPtsOffset) == 0) {
-        return;
-    }
+            // A valid story fighter always has starting style s0 in 0..4
+            if (s0 >= 5) return;
 
-    uint8_t s0 = kernel::G<uint8_t>(rec + 0x140);
-    uint8_t s1 = kernel::G<uint8_t>(rec + 0x141);
-    uint8_t s2 = kernel::G<uint8_t>(rec + 0x142);
+            // Sync style count in rec + 0xB2 (1, 2, or 3)
+            uint16_t style_count = 1 + (s1 < 5 ? 1 : 0) + (s2 < 5 ? 1 : 0);
+            kernel::G<uint16_t>(rec + 0xB2) = style_count;
 
-    // Fighting styles 0..4 are stored in the first 10 bits of buf (2 bits each: 0=unlearned, 2=learned)
-    uint16_t cur = kernel::G<uint16_t>(buf);
-    cur &= ~0x03FF;
-    if (s0 < 5) cur |= uint16_t(2 << (s0 * 2));
-    if (s1 < 5) cur |= uint16_t(2 << (s1 * 2));
-    if (s2 < 5) cur |= uint16_t(2 << (s2 * 2));
-    kernel::G<uint16_t>(buf) = cur;
+            // Player can learn more styles if they have less than 3 styles
+            bool can_learn_more = (style_count < 3);
+
+            // Fighting styles 0..4 are stored in the first 10 bits of buf (2 bits each):
+            // 2 = Owned (learned)
+            // 1 = Unlocked (available to buy/learn at Stapleton Gym)
+            // 0 = Locked (if already learned max 3 styles)
+            uint16_t style_bits = 0;
+            for (uint32_t st = 0; st < 5; st++) {
+                bool learned = (st == s0 || (s1 < 5 && st == s1) || (s2 < 5 && st == s2));
+                uint16_t val = learned ? 2 : (can_learn_more ? 1 : 0);
+                style_bits |= uint16_t(val << (st * 2));
+            }
+
+            uint16_t cur = kernel::G<uint16_t>(buf);
+            cur = (cur & ~0x03FF) | style_bits;
+            kernel::G<uint16_t>(buf) = cur;
+        };
+
+        uint32_t active = kernel::R32(profile + kActiveStorySlot);
+        if (active < kStorySlots) {
+            uint32_t rec = profile + kStoryRecordBase + active * kStoryRecordSize;
+            uint32_t ptr = kernel::R32(container + 0x4C);
+            uint32_t buf_idx = ptr ? kernel::R32(ptr) : active;
+            if (buf_idx > 15) buf_idx = active;
+            repair_slot(kernel::R32(container + buf_idx * 4 + 0x0C), rec);
+        }
+
+        for (uint32_t i = 0; i < kStorySlots; i++) {
+            uint32_t buf = kernel::R32(container + i * 4 + 0x0C);
+            uint32_t rec = profile + kStoryRecordBase + i * kStoryRecordSize;
+            repair_slot(buf, rec);
+        }
+    };
+
+    // 0x169C is the actual Fighting Styles container in Story Mode (sub_000517D0 / sub_0004EB60)
+    repair_styles_container(profile + 0x169C);
+    // 0x1644 is the Moves container (which also mirrors styles 0..4 in bits 0..9)
+    repair_styles_container(profile + 0x1644);
 }
 
 void RepairStoryBarber(uint32_t data = 0) {
@@ -132,22 +164,40 @@ void RepairStoryBarber(uint32_t data = 0) {
     uint32_t container = profile + 0x14E4;
     uint32_t count = kernel::R32(container + 0x08);
     if (!count || count > 5000) return;
-    uint32_t ptr = kernel::R32(container + 0x4C);
-    if (!ptr) return;
-    uint32_t buf_idx = kernel::R32(ptr);
-    if (buf_idx > 15) buf_idx = 0;
-    uint32_t buf = kernel::R32(container + buf_idx * 4 + 0x0C);
-    if (!buf) return;
 
-    // In normal gameplay at most 2 items have status 3 (equipped hair & beard).
-    // If more than 5 items have status 3, the container was corrupted by previous cheat logic.
-    uint32_t threes = 0;
-    for (uint32_t i = 0; i < count; i++) {
-        uint8_t val = (kernel::G<uint8_t>(buf + (i >> 2)) >> ((i & 3) << 1)) & 3;
-        if (val == 3) threes++;
-    }
-    if (threes > 5) {
-        UnlockContainer(container, 1);
+    auto fix_barber_buf = [&](uint32_t buf) {
+        if (!buf) return;
+        uint32_t threes = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            uint32_t byte_idx = i >> 2;
+            uint32_t bit_shift = (i & 3) << 1;
+            uint8_t val = (kernel::G<uint8_t>(buf + byte_idx) >> bit_shift) & 3;
+            if (val == 3) threes++;
+        }
+        // In normal gameplay at most 2 items have status 3 (equipped hair & beard).
+        // If more than 5 items have status 3, the container was corrupted by previous cheat logic.
+        // Reset items with status 3 back to status 1 (available in barber shop).
+        if (threes > 5) {
+            for (uint32_t i = 0; i < count; i++) {
+                uint32_t byte_idx = i >> 2;
+                uint32_t bit_shift = (i & 3) << 1;
+                uint8_t cur = kernel::G<uint8_t>(buf + byte_idx);
+                uint8_t val = (cur >> bit_shift) & 3;
+                if (val == 3) {
+                    cur = (cur & ~(3 << bit_shift)) | (1 << bit_shift);
+                    kernel::G<uint8_t>(buf + byte_idx) = cur;
+                }
+            }
+        }
+    };
+
+    uint32_t ptr = kernel::R32(container + 0x4C);
+    uint32_t buf_idx = ptr ? kernel::R32(ptr) : 0;
+    if (buf_idx > 15) buf_idx = 0;
+    fix_barber_buf(kernel::R32(container + buf_idx * 4 + 0x0C));
+
+    for (uint32_t i = 0; i < kStorySlots; i++) {
+        fix_barber_buf(kernel::R32(container + i * 4 + 0x0C));
     }
 }
 
@@ -160,17 +210,18 @@ void ApplyStoryUnlocks(uint32_t data = 0) {
     // Barber container 0x14E4: unlock with 1 (available in shop), matching official sub_00016040
     UnlockContainer(profile + 0x14E4, 1);
 
-    // Jewelry 0x153C, Clothes 0x1594, Tattoos 0x15EC, Voices 0x169C: unlock with 3 (owned)
+    // Jewelry 0x153C, Clothes 0x1594, Tattoos 0x15EC: unlock with 3 (owned)
     UnlockContainer(profile + 0x153C, 3);
     UnlockContainer(profile + 0x1594, 3);
     UnlockContainer(profile + 0x15EC, 3);
-    UnlockContainer(profile + 0x169C, 3);
 
-    // Moves container 0x1644: only unlock blazing moves (index >= 5) with 3; styles 0..4 left to player
-    UnlockContainer(profile + 0x1644, 3, 5);
+    // Moves container 0x1644: unlock with 1 (available in gym)
+    // Note: NEVER unlock Styles container 0x169C with 3! Styles are Story progression milestones.
+    UnlockContainer(profile + 0x1644, 1);
 
-    // Re-assert proper learned style bits for active character
+    // Re-assert proper learned style bits for active character (in both 0x169C and 0x1644)
     RepairStoryStyles(data);
+    RepairStoryBarber(data);
 
     kernel::W32(kDebugFlags, kernel::R32(kDebugFlags) | 0x05);
 }
@@ -283,21 +334,6 @@ X86_FUNC(sub_00055490) {
     }
     RepairStoryStyles(data);
     RepairStoryBarber(data);
-}
-
-// ItemMgr::GetItemUnlockState: query item unlock status (0: locked, 1: shop, 2: bought, 3: owned)
-X86_EXTERN_FUNC(__imp__sub_00017260);
-X86_FUNC(sub_00017260) {
-    uint32_t container = ctx.ecx;  // Save container pointer before __imp__sub_00017260 modifies ctx.ecx
-    __imp__sub_00017260(ctx, base);
-    if (game::On(game::kUnlockStoryItems) && ctx.eax != 0xFFFFFFFFu) {
-        uint32_t data = kernel::R32(game::kManagers + game::kGameData * 4);
-        uint32_t profile = data ? kernel::R32(data + 4) : 0;
-        // Do NOT override Moves container (0x1644) or Barber container (0x14E4)
-        if (!profile || (container != profile + 0x1644 && container != profile + 0x14E4)) {
-            ctx.eax = 3;
-        }
-    }
 }
 
 // ChooseShopList
