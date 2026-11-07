@@ -30,7 +30,7 @@ class TouchControls extends View {
     // the layout's controls, in native/touch.cpp's Unit order
     static final int STICK = 0, A = 1, B = 2, X = 3, Y = 4, DPAD = 5, START = 6, BACK = 7, LT = 8, RT = 9, L3 = 10,
             R3 = 11, GEAR = 12, WHITE = 13, BLACK = 14, RSTICK = 15, UNITS = 16;
-    static final String[] NAMES = {"STICK", "A", "B", "X", "Y", "D-PAD", "START", "BACK", "LT", "RT", "L3", "R3",
+    static final String[] NAMES = {"STICK", "A (GRAB)", "B (RUN)", "X (KICK)", "Y (PUNCH)", "D-PAD", "START", "BACK", "LT (HARD)", "RT (BLOCK)", "L3", "R3",
             "SETTINGS", "WHITE", "BLACK", "RIGHT STICK"};
 
     // the pad's buttons as input::Pad has them: the digital ones' bits, and the analog ones' places
@@ -39,9 +39,9 @@ class TouchControls extends View {
     private static final int AN_A = 0, AN_B = 1, AN_X = 2, AN_Y = 3, AN_BLACK = 4, AN_WHITE = 5, AN_LT = 6, AN_RT = 7;
 
     // the round buttons other than the face buttons, and what each presses: a digital bit, or an analog place (-1 none)
-    private static final int[] ROUND = {START, BACK, LT, RT, L3, R3, WHITE, BLACK};
-    private static final int[] ROUND_BIT = {BIT_START, BIT_BACK, 0, 0, LEFT_THUMB, RIGHT_THUMB, 0, 0};
-    private static final int[] ROUND_ANALOG = {-1, -1, AN_LT, AN_RT, -1, -1, AN_WHITE, AN_BLACK};
+    private static final int[] ROUND = {START, BACK, LT, RT};
+    private static final int[] ROUND_BIT = {BIT_START, BIT_BACK, 0, 0};
+    private static final int[] ROUND_ANALOG = {-1, -1, AN_LT, AN_RT};
     private static final int[] FACE_ANALOG = {AN_A, AN_B, AN_X, AN_Y};
     private static final int[] ARROW_BIT = {UP, DOWN, LEFT, RIGHT};
     private static final float[][] DIRS = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
@@ -223,9 +223,7 @@ class TouchControls extends View {
             {X, R.drawable.ctl_x, R.drawable.ctl_x_on}, {Y, R.drawable.ctl_y, R.drawable.ctl_y_on},
             {START, R.drawable.ctl_start, R.drawable.ctl_start_on}, {BACK, R.drawable.ctl_back, R.drawable.ctl_back_on},
             {LT, R.drawable.ctl_lt, R.drawable.ctl_lt_on}, {RT, R.drawable.ctl_rt, R.drawable.ctl_rt_on},
-            {L3, R.drawable.ctl_l3, R.drawable.ctl_l3_on}, {R3, R.drawable.ctl_r3, R.drawable.ctl_r3_on},
-            {GEAR, R.drawable.ctl_gear, R.drawable.ctl_gear_on}, {WHITE, R.drawable.ctl_white, R.drawable.ctl_white_on},
-            {BLACK, R.drawable.ctl_black, R.drawable.ctl_black_on},
+            {GEAR, R.drawable.ctl_gear, R.drawable.ctl_gear_on},
         };
         for (int[] e : ids) {
             if (e[1] == 0) continue;
@@ -296,6 +294,7 @@ class TouchControls extends View {
         float density = getResources().getDisplayMetrics().density;
         for (int u = 0; u < UNITS; u++) {
             if (u == RSTICK && cameraMode != FIXED) continue;
+            if (u == L3 || u == R3 || u == WHITE || u == BLACK) continue;
             boolean on = u == selected;
             ring.setColor(on ? Theme.GRAB_ON : (Theme.GRAB & 0x00FFFFFF) | 0xC0000000);
             ring.setStrokeWidth((on ? 3f : 1.5f) * density);

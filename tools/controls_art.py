@@ -2,13 +2,9 @@
 """The on-screen controls' art: every control as a PNG, normal and held, into app/src/main/res/drawable-nodpi, drawn
 by TouchControls.java. Each is drawn here as an SVG and rendered by rsvg-convert.
 
-The look is a phone game's, not the pad's: see-through round controls, clear in the middle, a soft white glow inside
-the edge that raises them and a thin white rim, no drop shadow. The face buttons carry the Xbox pad's letters, thin
-and uncoloured, the rest their names; a held control is the same brighter.
-
-Every image is a control of radius 100 in a 260 x 260 box centred on it, so TouchControls draws each one 1.3 times its
-radius out from its centre. Run this after changing the look or a label and commit the PNGs. Needs rsvg-convert and
-Noto Sans."""
+The design shows the default Xbox indicator prominently, with the in-game action label small below it, enclosed in a
+clean circle line. Useless buttons (L3, R3, White, Black) are empty/removed.
+"""
 import math
 import os
 import subprocess
@@ -20,9 +16,7 @@ OUT = Path(os.environ.get("CONTROLS_OUT", ROOT / "app" / "src" / "main" / "res" 
 PX = 256          # the PNG's side
 C, R = 130, 100   # the control's centre and radius in the box
 
-GLYPH = "#e6e6e6"  # a soft white: pure white stood out over the game
-FONT = "font-family='Noto Sans' font-weight='800' text-anchor='middle' dominant-baseline='central'"
-
+GLYPH = "#e6e6e6"
 DEFS = """<defs>
 <radialGradient id='body' cx='50%' cy='50%' r='50%'>
   <stop offset='0' stop-color='#fff' stop-opacity='0.03'/>
@@ -38,61 +32,43 @@ DEFS = """<defs>
 </defs>"""
 
 
-
 def svg(body):
     return (f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 260' width='{PX}' height='{PX}'>"
             f"{DEFS}{body}</svg>")
 
 
-def surface(shape, on, glow=None, clip=R):
-    """A control's body: clear in the middle and whiter towards its edge, a wide soft white glow inside the edge that
-    raises it (blurred, kept inside the control), and a thin white rim; held, all of it brighter. No drop shadow.
-    shape is an SVG element with {style} where its attributes go; glow the ring the soft glow is drawn along."""
-    out = shape.format(style=f"fill='url(#{'bodyon' if on else 'body'})'")
-    if glow:
-        # kept inside the control's own edge
-        out += (f"<clipPath id='in{clip:.0f}'><circle cx='{C}' cy='{C}' r='{clip}'/></clipPath>"
-                f"<g clip-path='url(#in{clip:.0f})'>" +
-                glow.format(style=f"fill='none' stroke='#fff' stroke-opacity='{0.35 if on else 0.18}' "
-                                  f"stroke-width='10' "
-                                  f"filter='url(#soft)'") + "</g>")
-    out += shape.format(style=f"fill='none' stroke='#fff' stroke-opacity='{0.65 if on else 0.4}' stroke-width='2.5'")
-    return out
+def circle_line(on, r=R):
+    """A clean circle outline: subtle fill and line normally, brighter when held."""
+    fill = f"rgba(255,255,255,{0.25 if on else 0.06})"
+    stroke_op = "0.95" if on else "0.60"
+    stroke_w = "4.5" if on else "3.0"
+    return (f"<circle cx='{C}' cy='{C}' r='{r - 4}' fill='{fill}' stroke='#ffffff' "
+            f"stroke-opacity='{stroke_op}' stroke-width='{stroke_w}'/>")
 
 
-def disc(on, r=R):
-    return surface(f"<circle cx='{C}' cy='{C}' r='{r - 1.5}' {{style}}/>", on,
-                   f"<circle cx='{C}' cy='{C}' r='{r - 4}' {{style}}/>", r)
+def button_combo(xbox, action, on, xbox_size=68, r=R):
+    """A button with prominent Xbox indicator and small action label below it."""
+    text_op = "1.0" if on else "0.92"
+    if action:
+        text_svg = (
+            f"<text x='{C}' y='{C - 12}' font-size='{xbox_size}' font-family='Noto Sans' font-weight='700' "
+            f"text-anchor='middle' dominant-baseline='central' fill='#ffffff' fill-opacity='{text_op}' "
+            f"stroke='#000000' stroke-opacity='0.40' stroke-width='3' paint-order='stroke'>{xbox}</text>"
+            f"<text x='{C}' y='{C + 42}' font-size='22' font-family='Noto Sans' font-weight='800' letter-spacing='1.5' "
+            f"text-anchor='middle' dominant-baseline='central' fill='#ffffff' fill-opacity='{0.95 if on else 0.75}' "
+            f"stroke='#000000' stroke-opacity='0.40' stroke-width='2' paint-order='stroke'>{action}</text>"
+        )
+    else:
+        text_svg = (
+            f"<text x='{C}' y='{C}' font-size='{xbox_size}' font-family='Noto Sans' font-weight='700' "
+            f"text-anchor='middle' dominant-baseline='central' fill='#ffffff' fill-opacity='{text_op}' "
+            f"stroke='#000000' stroke-opacity='0.40' stroke-width='3' paint-order='stroke'>{xbox}</text>"
+        )
+    return svg(circle_line(on, r) + text_svg)
 
 
-def text(s, size, dy=0, spacing=0):
-    return (f"<text x='{C}' y='{C + dy}' font-size='{size}' letter-spacing='{spacing}' fill='{GLYPH}' stroke='#000' "
-            f"stroke-opacity='0.30' stroke-width='4' paint-order='stroke' {FONT}>{s}</text>")
-
-
-def letter(ch, on):
-    """A face button: its letter large and thin, in the glyphs' soft white."""
-    return svg(disc(on) +
-               f"<text x='{C}' y='{C + 4}' font-size='{R * 1.0:.0f}' font-family='Noto Sans' font-weight='400' "
-               f"text-anchor='middle' dominant-baseline='central' fill='{GLYPH}' stroke='#000' stroke-opacity='0.25' "
-               f"stroke-width='2' paint-order='stroke'>{ch}</text>")
-
-
-def label(name, size, on):
-    return svg(disc(on) + text(name, size, 3, 1))
-
-
-def click(name, on):
-    """L3 and R3: the stick pressed in, its name alone."""
-    return svg(disc(on) + text(name, 60, 3, 2))
-
-
-def dot(white, on):
-    """White and Black: the pad's small pair, a disc of each colour."""
-    fill, edge = ("#f4f2ec", "#000") if white else ("#08090c", "#fff")
-    return svg(disc(on, R * 0.86) +
-               f"<circle cx='{C}' cy='{C}' r='{R * 0.30}' fill='{fill}' stroke='{edge}' stroke-opacity='0.55' "
-               f"stroke-width='5'/>")
+def empty():
+    return f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 260' width='{PX}' height='{PX}'></svg>"
 
 
 def arrow(dx, dy, on):
@@ -103,7 +79,19 @@ def arrow(dx, dy, on):
     b2 = (C - dx * t * 0.55 + dy * t * 0.85, C - dy * t * 0.55 - dx * t * 0.85)
     tri = (f"<polygon points='{tip[0]:.2f},{tip[1]:.2f} {b1[0]:.2f},{b1[1]:.2f} {b2[0]:.2f},{b2[1]:.2f}' "
            f"fill='{GLYPH}' stroke='{GLYPH}' stroke-width='8' stroke-linejoin='round'/>")
-    return svg(disc(on) + tri)
+    return svg(circle_line(on) + tri)
+
+
+def disc(on, r=R):
+    shape = f"<circle cx='{C}' cy='{C}' r='{r - 1.5}' {{style}}/>"
+    glow = f"<circle cx='{C}' cy='{C}' r='{r - 4}' {{style}}/>"
+    out = shape.format(style=f"fill='url(#{'bodyon' if on else 'body'})'")
+    out += (f"<clipPath id='in{r:.0f}'><circle cx='{C}' cy='{C}' r='{r}'/></clipPath>"
+            f"<g clip-path='url(#in{r:.0f})'>" +
+            glow.format(style=f"fill='none' stroke='#fff' stroke-opacity='{0.35 if on else 0.18}' "
+                              f"stroke-width='10' filter='url(#soft)'") + "</g>")
+    out += shape.format(style=f"fill='none' stroke='#fff' stroke-opacity='{0.65 if on else 0.4}' stroke-width='2.5'")
+    return out
 
 
 def stick_base():
@@ -129,7 +117,7 @@ def knob(on):
 
 
 def gear(on):
-    """Settings: a filled cog with a hole, on a disc."""
+    """Settings: a cog with a hole inside a circle line."""
     pts = []
     step = 2 * math.pi / 8
     outer, inner = R * 0.56, R * 0.42
@@ -138,30 +126,34 @@ def gear(on):
             a = i * step + k * step
             pts.append(f"{C + math.cos(a) * rr:.2f},{C + math.sin(a) * rr:.2f}")
     h = R * 0.18
-    return svg(disc(on) +
+    return svg(circle_line(on) +
                f"<path fill-rule='evenodd' fill='{GLYPH}' d='M{' L'.join(pts)} Z "
                f"M{C + h},{C} A{h},{h} 0 1 0 {C - h},{C} A{h},{h} 0 1 0 {C + h},{C} Z' stroke='{GLYPH}' "
                f"stroke-width='3' stroke-linejoin='round'/>")
 
 
-# the Xbox pad's letters
-FACE = {"a": "A", "b": "B", "x": "X", "y": "Y"}
+# Xbox indicator + small in-game action label:
+BUTTONS = {
+    "a": ("A", "GRAB", 68),
+    "b": ("B", "RUN", 68),
+    "x": ("X", "KICK", 68),
+    "y": ("Y", "PUNCH", 68),
+    "lt": ("LT", "HARD", 58),
+    "rt": ("RT", "BLOCK", 58),
+    "start": ("START", "PAUSE", 36),
+    "back": ("BACK", "", 44),
+}
 
 
 def art():
     out = {}
     for on in (False, True):
         s = "_on" if on else ""
-        for key, ch in FACE.items():
-            out[f"ctl_{key}{s}"] = letter(ch, on)
-        out[f"ctl_lt{s}"] = label("LT", 60, on)
-        out[f"ctl_rt{s}"] = label("RT", 60, on)
-        out[f"ctl_start{s}"] = label("START", 36, on)
-        out[f"ctl_back{s}"] = label("BACK", 40, on)
-        out[f"ctl_l3{s}"] = click("L3", on)
-        out[f"ctl_r3{s}"] = click("R3", on)
-        out[f"ctl_white{s}"] = dot(True, on)
-        out[f"ctl_black{s}"] = dot(False, on)
+        for key, (xbox, action, size) in BUTTONS.items():
+            out[f"ctl_{key}{s}"] = button_combo(xbox, action, on, size)
+        # Useless buttons in Def Jam (L3, R3, White, Black) are blanked:
+        for unused in ("l3", "r3", "white", "black"):
+            out[f"ctl_{unused}{s}"] = empty()
         out[f"ctl_gear{s}"] = gear(on)
         for n, d in (("up", (0, -1)), ("down", (0, 1)), ("left", (-1, 0)), ("right", (1, 0))):
             out[f"ctl_arrow_{n}{s}"] = arrow(*d, on)
