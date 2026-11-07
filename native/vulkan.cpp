@@ -1545,7 +1545,7 @@ private:
     uint32_t bb_w_ = 0;
     uint32_t bb_h_ = 0;
     float scale_ = 1.0f;
-    float wide_ = 1.0f;      // widescreen: the screen's width over the 16:9 picture's at its height, 1 off
+    float wide_ = 1.0f;      // widescreen: the screen's width over the 4:3 picture's at its height, 1 off
     uint32_t msaa_ = 1;      // samples in use
     uint32_t msaa_set_ = 0;  // the setting they came from
     // ambient occlusion: the raw pass and its first blur, each with view z beside it
@@ -4920,6 +4920,7 @@ bool VulkanBackend::CreateSwapchain(uint32_t w, uint32_t h, bool hdr) {
     bb_w_ = extent.width;
     bb_h_ = extent.height;
     swap_dirty_ = false;
+    ApplySettings();
     if (hdr && hdr_ext_) {
         // BT.2020 primaries, D65, the peak the frame is stretched to
         auto set_hdr = reinterpret_cast<PFN_vkSetHdrMetadataEXT>(vkGetDeviceProcAddr(dev_, "vkSetHdrMetadataEXT"));
@@ -5159,10 +5160,10 @@ bool VulkanBackend::DrawSmaaPasses(Image* src, VkFormat fmt, uint32_t w, uint32_
     return true;
 }
 
-// where the picture lands in the back buffer: the shape the console puts out, 16:9 in its widescreen mode, pillarboxed
+// where the picture lands in the back buffer: the 4:3 shape the console puts out, pillarboxed
 // rather than stretched across the phone's wider screen, or in WIDESCREEN the whole screen
 VulkanBackend::FramePlace VulkanBackend::PlaceFrame(const Target& t) {
-    float tv = app::Widescreen() ? 16.0f / 9.0f : 4.0f / 3.0f;
+    float tv = 4.0f / 3.0f;
     if (game::Opt().aspect) tv *= wide_;  // widescreen: the picture the widened view drew is the screen's shape
     // only the part the title drew: the black it leaves around its picture, where a television's overscan hid it, is
     // not shown, and what is kept is in the TV's proportions
@@ -5474,11 +5475,11 @@ void VulkanBackend::Present(const Surface& front) {
 }
 
 void VulkanBackend::ApplySettings() {
-    // widescreen: the 3D view is widened by as much as the screen is wider than the 16:9 picture as PlaceFrame shows
+    // widescreen: the 3D view is widened by as much as the screen is wider than the 4:3 picture as PlaceFrame shows
     // it, only the part the title drew and in the TV's proportions, so the widened picture fills the screen
     float was = wide_;
     wide_ = 1;
-    if (game::Opt().aspect && app::Widescreen() && bb_h_ && guest_w_ && guest_h_) {
+    if (game::Opt().aspect && bb_h_ && guest_w_ && guest_h_) {
         Target whole{};
         whole.gw = guest_w_;
         whole.gh = guest_h_;
