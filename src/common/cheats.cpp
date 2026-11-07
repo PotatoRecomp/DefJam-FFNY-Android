@@ -75,6 +75,8 @@ void UnlockContainer(uint32_t container, uint8_t val, uint32_t start_idx = 0) {
             uint32_t byte_idx = i >> 2;
             uint32_t shift = (i & 3) << 1;
             uint8_t cur = kernel::G<uint8_t>(buf + byte_idx);
+            uint8_t cur_val = (cur >> shift) & mask;
+            if (val == 1 && cur_val >= 2) continue;
             cur &= ~(mask << shift);
             cur |= (val & mask) << shift;
             kernel::G<uint8_t>(buf + byte_idx) = cur;
@@ -110,9 +112,12 @@ void RepairStoryStyles(uint32_t data = 0) {
             // A valid story fighter always has starting style s0 in 0..4
             if (s0 >= 5) return;
 
-            // Sync style count in rec + 0xB2 (1, 2, or 3)
+            // Sync style count in rec + 0xB2 (1, 2, or 3) without reducing learned moves count
             uint16_t style_count = 1 + (s1 < 5 ? 1 : 0) + (s2 < 5 ? 1 : 0);
-            kernel::G<uint16_t>(rec + 0xB2) = style_count;
+            uint16_t cur_b2 = kernel::G<uint16_t>(rec + 0xB2);
+            if (cur_b2 < style_count) {
+                kernel::G<uint16_t>(rec + 0xB2) = style_count;
+            }
 
             // Player can learn more styles if they have less than 3 styles
             bool can_learn_more = (style_count < 3);
@@ -151,8 +156,18 @@ void RepairStoryStyles(uint32_t data = 0) {
 
     // 0x169C is the actual Fighting Styles container in Story Mode (sub_000517D0 / sub_0004EB60)
     repair_styles_container(profile + 0x169C);
-    // 0x1644 is the Moves container (which also mirrors styles 0..4 in bits 0..9)
-    repair_styles_container(profile + 0x1644);
+}
+
+void RepairStoryMoves(uint32_t data = 0) {
+    if (!data) data = kernel::R32(kManagers + kGameData * 4);
+    if (!data) return;
+    uint32_t profile = kernel::R32(data + 4);
+    if (!profile) return;
+
+    // All moves already bought and owned (status 3), ready to assign directly in Assign Move
+    if (On(kUnlockStoryItems)) {
+        UnlockContainer(profile + 0x1644, 3);
+    }
 }
 
 void RepairStoryBarber(uint32_t data = 0) {
@@ -210,17 +225,17 @@ void ApplyStoryUnlocks(uint32_t data = 0) {
     // Barber container 0x14E4: unlock with 1 (available in shop), matching official sub_00016040
     UnlockContainer(profile + 0x14E4, 1);
 
-    // Jewelry 0x153C, Clothes 0x1594, Tattoos 0x15EC: unlock with 3 (owned)
+    // Jewelry 0x153C, Clothes 0x1594, Tattoos 0x15EC, Moves 0x1644: unlock with 3 (owned)
     UnlockContainer(profile + 0x153C, 3);
     UnlockContainer(profile + 0x1594, 3);
     UnlockContainer(profile + 0x15EC, 3);
+    UnlockContainer(profile + 0x1644, 3);
 
-    // Moves container 0x1644: unlock with 1 (available in gym)
     // Note: NEVER unlock Styles container 0x169C with 3! Styles are Story progression milestones.
-    UnlockContainer(profile + 0x1644, 1);
 
-    // Re-assert proper learned style bits for active character (in both 0x169C and 0x1644)
+    // Re-assert proper learned style bits and moves for active character
     RepairStoryStyles(data);
+    RepairStoryMoves(data);
     RepairStoryBarber(data);
 
     kernel::W32(kDebugFlags, kernel::R32(kDebugFlags) | 0x05);
@@ -333,6 +348,7 @@ X86_FUNC(sub_00055490) {
         ApplyStoryUnlocks(data);
     }
     RepairStoryStyles(data);
+    RepairStoryMoves(data);
     RepairStoryBarber(data);
 }
 
@@ -341,6 +357,7 @@ X86_EXTERN_FUNC(__imp__sub_0004C6C0);
 X86_FUNC(sub_0004C6C0) {
     using namespace game;
     RepairStoryStyles();
+    RepairStoryMoves();
     RepairStoryBarber();
     if (On(kUnlockStoryItems)) {
         ApplyStoryUnlocks();
@@ -353,6 +370,7 @@ X86_EXTERN_FUNC(__imp__sub_0004C990);
 X86_FUNC(sub_0004C990) {
     using namespace game;
     RepairStoryStyles();
+    RepairStoryMoves();
     RepairStoryBarber();
     if (On(kUnlockStoryItems)) {
         ApplyStoryUnlocks();
@@ -368,6 +386,7 @@ X86_FUNC(sub_0004CA30) {
         ApplyStoryCash();
     }
     RepairStoryStyles();
+    RepairStoryMoves();
     RepairStoryBarber();
     if (On(kUnlockStoryItems)) {
         ApplyStoryUnlocks();
@@ -383,6 +402,7 @@ X86_FUNC(sub_0004CA70) {
         ApplyStoryDevPts();
     }
     RepairStoryStyles();
+    RepairStoryMoves();
     RepairStoryBarber();
     if (On(kUnlockStoryItems)) {
         ApplyStoryUnlocks();
@@ -465,6 +485,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_datfooldive_defjam_DefJamActivity_nat
     }
     if (game::g_main_menu) {
         game::RepairStoryStyles();
+        game::RepairStoryMoves();
         game::RepairStoryBarber();
     }
     app::Save();
