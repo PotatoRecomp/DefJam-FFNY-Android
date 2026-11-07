@@ -62,7 +62,7 @@ constexpr uint32_t kInfiniteStoryPointsVal = 999999;
 constexpr uint32_t kShopContainers[] = {0x14E4, 0x153C, 0x1594, 0x15EC, 0x1644, 0x169C};
 constexpr uint32_t kDebugFlags = 0x2FB1F0;
 
-void UnlockContainer(uint32_t container, uint8_t val) {
+void UnlockContainer(uint32_t container, uint8_t val, uint32_t start_idx = 0) {
     if (!container) return;
     uint32_t count = kernel::R32(container + 0x08);
     if (!count || count > 5000) return;
@@ -75,7 +75,7 @@ void UnlockContainer(uint32_t container, uint8_t val) {
     uint8_t mask = kernel::G<uint8_t>(container + 0x50);
     if (!mask) mask = 3;
 
-    for (uint32_t i = 0; i < count; i++) {
+    for (uint32_t i = start_idx; i < count; i++) {
         uint32_t byte_idx = i >> 2;
         uint32_t shift = (i & 3) << 1;
         uint8_t cur = kernel::G<uint8_t>(buf + byte_idx);
@@ -85,15 +85,93 @@ void UnlockContainer(uint32_t container, uint8_t val) {
     }
 }
 
+void RepairStoryStyles(uint32_t data = 0) {
+    if (!data) data = kernel::R32(kManagers + kGameData * 4);
+    if (!data) return;
+    uint32_t profile = kernel::R32(data + 4);
+    if (!profile) return;
+
+    uint32_t container = profile + 0x1644;
+    uint32_t count = kernel::R32(container + 0x08);
+    if (!count) return;
+    uint32_t ptr = kernel::R32(container + 0x4C);
+    if (!ptr) return;
+    uint32_t buf_idx = kernel::R32(ptr);
+    if (buf_idx > 15) buf_idx = 0;
+    uint32_t buf = kernel::R32(container + buf_idx * 4 + 0x0C);
+    if (!buf) return;
+
+    uint32_t active = kernel::R32(profile + kActiveStorySlot);
+    if (active >= kStorySlots) return;
+    uint32_t rec = profile + kStoryRecordBase + active * kStoryRecordSize;
+
+    if (kernel::G<uint8_t>(rec + 0x08) == 0 && kernel::G<uint8_t>(rec + 0x09) == 0 &&
+        kernel::R32(rec + kStoryCashOffset) == 0 && kernel::R32(rec + kStoryDevPtsOffset) == 0) {
+        return;
+    }
+
+    uint8_t s0 = kernel::G<uint8_t>(rec + 0x140);
+    uint8_t s1 = kernel::G<uint8_t>(rec + 0x141);
+    uint8_t s2 = kernel::G<uint8_t>(rec + 0x142);
+
+    // Fighting styles 0..4 are stored in the first 10 bits of buf (2 bits each: 0=unlearned, 2=learned)
+    uint16_t cur = kernel::G<uint16_t>(buf);
+    cur &= ~0x03FF;
+    if (s0 < 5) cur |= uint16_t(2 << (s0 * 2));
+    if (s1 < 5) cur |= uint16_t(2 << (s1 * 2));
+    if (s2 < 5) cur |= uint16_t(2 << (s2 * 2));
+    kernel::G<uint16_t>(buf) = cur;
+}
+
+void RepairStoryBarber(uint32_t data = 0) {
+    if (!data) data = kernel::R32(kManagers + kGameData * 4);
+    if (!data) return;
+    uint32_t profile = kernel::R32(data + 4);
+    if (!profile) return;
+
+    uint32_t container = profile + 0x14E4;
+    uint32_t count = kernel::R32(container + 0x08);
+    if (!count || count > 5000) return;
+    uint32_t ptr = kernel::R32(container + 0x4C);
+    if (!ptr) return;
+    uint32_t buf_idx = kernel::R32(ptr);
+    if (buf_idx > 15) buf_idx = 0;
+    uint32_t buf = kernel::R32(container + buf_idx * 4 + 0x0C);
+    if (!buf) return;
+
+    // In normal gameplay at most 2 items have status 3 (equipped hair & beard).
+    // If more than 5 items have status 3, the container was corrupted by previous cheat logic.
+    uint32_t threes = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        uint8_t val = (kernel::G<uint8_t>(buf + (i >> 2)) >> ((i & 3) << 1)) & 3;
+        if (val == 3) threes++;
+    }
+    if (threes > 5) {
+        UnlockContainer(container, 1);
+    }
+}
+
 void ApplyStoryUnlocks(uint32_t data = 0) {
     if (!data) data = kernel::R32(kManagers + kGameData * 4);
     if (!data) return;
     uint32_t profile = kernel::R32(data + 4);
     if (!profile) return;
 
-    for (uint32_t off : kShopContainers) {
-        UnlockContainer(profile + off, 3);
-    }
+    // Barber container 0x14E4: unlock with 1 (available in shop), matching official sub_00016040
+    UnlockContainer(profile + 0x14E4, 1);
+
+    // Jewelry 0x153C, Clothes 0x1594, Tattoos 0x15EC, Voices 0x169C: unlock with 3 (owned)
+    UnlockContainer(profile + 0x153C, 3);
+    UnlockContainer(profile + 0x1594, 3);
+    UnlockContainer(profile + 0x15EC, 3);
+    UnlockContainer(profile + 0x169C, 3);
+
+    // Moves container 0x1644: only unlock blazing moves (index >= 5) with 3; styles 0..4 left to player
+    UnlockContainer(profile + 0x1644, 3, 5);
+
+    // Re-assert proper learned style bits for active character
+    RepairStoryStyles(data);
+
     kernel::W32(kDebugFlags, kernel::R32(kDebugFlags) | 0x05);
 }
 
@@ -203,14 +281,22 @@ X86_FUNC(sub_00055490) {
     if (On(kUnlockStoryItems)) {
         ApplyStoryUnlocks(data);
     }
+    RepairStoryStyles(data);
+    RepairStoryBarber(data);
 }
 
 // ItemMgr::GetItemUnlockState: query item unlock status (0: locked, 1: shop, 2: bought, 3: owned)
 X86_EXTERN_FUNC(__imp__sub_00017260);
 X86_FUNC(sub_00017260) {
+    uint32_t container = ctx.ecx;  // Save container pointer before __imp__sub_00017260 modifies ctx.ecx
     __imp__sub_00017260(ctx, base);
     if (game::On(game::kUnlockStoryItems) && ctx.eax != 0xFFFFFFFFu) {
-        ctx.eax = 3;
+        uint32_t data = kernel::R32(game::kManagers + game::kGameData * 4);
+        uint32_t profile = data ? kernel::R32(data + 4) : 0;
+        // Do NOT override Moves container (0x1644) or Barber container (0x14E4)
+        if (!profile || (container != profile + 0x1644 && container != profile + 0x14E4)) {
+            ctx.eax = 3;
+        }
     }
 }
 
@@ -218,6 +304,8 @@ X86_FUNC(sub_00017260) {
 X86_EXTERN_FUNC(__imp__sub_0004C6C0);
 X86_FUNC(sub_0004C6C0) {
     using namespace game;
+    RepairStoryStyles();
+    RepairStoryBarber();
     if (On(kUnlockStoryItems)) {
         ApplyStoryUnlocks();
     }
@@ -228,6 +316,8 @@ X86_FUNC(sub_0004C6C0) {
 X86_EXTERN_FUNC(__imp__sub_0004C990);
 X86_FUNC(sub_0004C990) {
     using namespace game;
+    RepairStoryStyles();
+    RepairStoryBarber();
     if (On(kUnlockStoryItems)) {
         ApplyStoryUnlocks();
     }
@@ -241,6 +331,8 @@ X86_FUNC(sub_0004CA30) {
     if (On(kStoryCash)) {
         ApplyStoryCash();
     }
+    RepairStoryStyles();
+    RepairStoryBarber();
     if (On(kUnlockStoryItems)) {
         ApplyStoryUnlocks();
     }
@@ -254,6 +346,8 @@ X86_FUNC(sub_0004CA70) {
     if (On(kStoryDevPts)) {
         ApplyStoryDevPts();
     }
+    RepairStoryStyles();
+    RepairStoryBarber();
     if (On(kUnlockStoryItems)) {
         ApplyStoryUnlocks();
     }
@@ -332,6 +426,10 @@ extern "C" JNIEXPORT void JNICALL Java_com_datfooldive_defjam_DefJamActivity_nat
     }
     if (i == game::kUnlockStoryItems && on && game::g_main_menu) {
         game::ApplyStoryUnlocks();
+    }
+    if (game::g_main_menu) {
+        game::RepairStoryStyles();
+        game::RepairStoryBarber();
     }
     app::Save();
 }
