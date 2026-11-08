@@ -140,6 +140,7 @@ BUTTONS = {
     "y": ("Y", "PUNCH", 68),
     "lt": ("LT", "HARD", 58),
     "rt": ("RT", "BLOCK", 58),
+    "white": ("WHITE", "TARGET", 36),
     "start": ("START", "PAUSE", 36),
     "back": ("BACK", "", 44),
 }
@@ -151,8 +152,8 @@ def art():
         s = "_on" if on else ""
         for key, (xbox, action, size) in BUTTONS.items():
             out[f"ctl_{key}{s}"] = button_combo(xbox, action, on, size)
-        # Useless buttons in Def Jam (L3, R3, White, Black) are blanked:
-        for unused in ("l3", "r3", "white", "black"):
+        # Unused buttons in Def Jam (L3, R3, Black) are blanked:
+        for unused in ("l3", "r3", "black"):
             out[f"ctl_{unused}{s}"] = empty()
         out[f"ctl_gear{s}"] = gear(on)
         for n, d in (("up", (0, -1)), ("down", (0, 1)), ("left", (-1, 0)), ("right", (1, 0))):

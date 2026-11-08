@@ -105,37 +105,35 @@ void RepairStoryStyles(uint32_t data = 0) {
 
         auto repair_slot = [&](uint32_t buf, uint32_t rec) {
             if (!buf || !rec) return;
-            uint8_t s0 = kernel::G<uint8_t>(rec + 0x140);
-            uint8_t s1 = kernel::G<uint8_t>(rec + 0x141);
-            uint8_t s2 = kernel::G<uint8_t>(rec + 0x142);
 
-            // A valid story fighter always has starting style s0 in 0..4
-            if (s0 >= 5) return;
-
-            // Sync style count in rec + 0xB2 (1, 2, or 3) without reducing learned moves count
-            uint16_t style_count = 1 + (s1 < 5 ? 1 : 0) + (s2 < 5 ? 1 : 0);
-            uint16_t cur_b2 = kernel::G<uint16_t>(rec + 0xB2);
-            if (cur_b2 < style_count) {
-                kernel::G<uint16_t>(rec + 0xB2) = style_count;
-            }
-
-            // Player can learn more styles if they have less than 3 styles
-            bool can_learn_more = (style_count < 3);
-
-            // Fighting styles 0..4 are stored in the first 10 bits of buf (2 bits each):
-            // 2 = Owned (learned)
-            // 1 = Unlocked (available to buy/learn at Stapleton Gym)
-            // 0 = Locked (if already learned max 3 styles)
-            uint16_t style_bits = 0;
-            for (uint32_t st = 0; st < 5; st++) {
-                bool learned = (st == s0 || (s1 < 5 && st == s1) || (s2 < 5 && st == s2));
-                uint16_t val = learned ? 2 : (can_learn_more ? 1 : 0);
-                style_bits |= uint16_t(val << (st * 2));
-            }
-
+            // The learned styles are these container bits (2 bits per item, 2 = learned).
+            // The game sets them itself: first style at character creation (sub_0004EB60
+            // SetStatus(2) + rec+0xB2++ + rec+0xB4=1), gym styles at the story event
+            // (sub_0007A2B0 SetStatus(2)). Never rebuild them from the record: rec+0x140
+            // is the gym's last-offered style, rewritten every gym event — treating it
+            // as the starting style demotes the real first style to "available" and
+            // marks the gym style as learned (the "my kickboxing became wrestling" bug).
             uint16_t cur = kernel::G<uint16_t>(buf);
-            cur = (cur & ~0x03FF) | style_bits;
-            kernel::G<uint16_t>(buf) = cur;
+            uint16_t style_bits = 0;
+            uint32_t learned = 0;
+            for (uint32_t item = 0; item < 5; item++) {
+                uint16_t st = (cur >> (item * 2)) & 3;
+                if (st >= 2) {
+                    st = 2;  // 3 is never a legitimate style status (unlock must not use it here)
+                    learned++;
+                }
+                style_bits |= uint16_t(st << (item * 2));
+            }
+            if (style_bits != cur) {
+                kernel::G<uint16_t>(buf) = style_bits;
+            }
+
+            // Sync style count in rec + 0xB2 upward so the gym's can-learn checks agree
+            // with the container bits.
+            uint16_t cur_b2 = kernel::G<uint16_t>(rec + 0xB2);
+            if (learned && cur_b2 < learned) {
+                kernel::G<uint16_t>(rec + 0xB2) = (uint16_t)learned;
+            }
         };
 
         uint32_t active = kernel::R32(profile + kActiveStorySlot);
