@@ -1787,6 +1787,9 @@ bool VulkanBackend::CreateDevice() {
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     f2.features.samplerAnisotropy = have.samplerAnisotropy;
     f2.features.fillModeNonSolid = have.fillModeNonSolid;
+    // points wider than a pixel: the title's sprites (the sparkles on the fighters' jewellery) and its point sizes
+    f2.features.largePoints = have.largePoints;
+    if (!have.largePoints) LOGR("vulkan: no large points, every point is one pixel");
     f2.features.depthClamp = have.depthClamp;
     // the clamp only with clip distances: they cut away what is behind the eye, which without them (Mali) is drawn
     // through it, out to infinity
@@ -1923,9 +1926,10 @@ bool VulkanBackend::CreateDevice() {
     VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &ti};
     if (timeline_) VK_CHECK(vkCreateSemaphore(dev_, &si, nullptr, &fence_));
     // HLSL to SPIR-V at run time: the NDK has no shaderc, glslang's HLSL front end is the same compiler; no clip
-    // distance, as on Mali and in Black-Android: the path the port is seen to draw right on. A point list's vertex
-    // shader must write the point size without maintenance5, which only Mali takes; Mali is left as it draws
-    vkshader::Init(host::FilesDir() / "shadercache", false, !maintenance5_ && props_.vendorID != kVendorArm);
+    // distance, as on Mali and in Black-Android: the path the port is seen to draw right on. The vertex shaders write
+    // the point size on every GPU: the title's points are as wide as it asks (its vertex programs' oPts, or
+    // D3DRS_POINTSIZE), not one host pixel; the size is ignored by every topology but a point list
+    vkshader::Init(host::FilesDir() / "shadercache", false, true);
     return true;
 }
 
@@ -4103,6 +4107,21 @@ void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
     c.misc[3] = s.rs[kRsSpecularEnable] ? 1.0f : 0.0f;
 }
 
+// D3DRS_POINTSIZE_MAX left at 0 would draw every point empty: the XDK's default is 64
+constexpr float kPointSizeMaxDefault = 64.0f;
+
+void FillPointConstants(const State& s, DrawConstants& c) {
+    c.ptsz[0] = Bits(s.rs[kRsPointSize]);
+    c.ptsz[1] = std::max(Bits(s.rs[kRsPointSizeMin]), 0.0f);
+    c.ptsz[2] = Bits(s.rs[kRsPointSizeMax]);
+    if (!(c.ptsz[2] > 0)) c.ptsz[2] = kPointSizeMaxDefault;
+    c.ptsz[3] = s.rs[kRsPointScaleEnable] ? 1.0f : 0.0f;
+    c.ptscale[0] = Bits(s.rs[kRsPointScaleA]);
+    c.ptscale[1] = Bits(s.rs[kRsPointScaleB]);
+    c.ptscale[2] = Bits(s.rs[kRsPointScaleC]);
+    c.ptscale[3] = float(s.viewport.h);
+}
+
 void FillCombinerConstants(const State& s, DrawConstants& c) {
     for (int i = 0; i < 8; i++) {
         Color(SimpleState(s, kMPsConstant0 + i * 4), c.pc[i * 2]);
@@ -4330,6 +4349,7 @@ void VulkanBackend::UploadConstants(const State& s, const DrawShaders& sh, const
     FillFogConstants(s, c);
     FillCombinerConstants(s, c);
     FillTextureConstants(s, sh, stages, c);
+    FillPointConstants(s, c);
     if (sh.fixed_transform) {
         FillTransformConstants(s, size, c);
         FillLightConstants(s, sh.fk, c);
@@ -4460,6 +4480,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         for (auto& t : stages.info)
             if (t.kind) t.flags |= kTexShift;
     PixelKey pk = MakePixelKey(s, stages.info);
+    pk.sprite = a.topology == Topology::Points && s.rs[kRsPointSpriteEnable] != 0;
     sh.near_depth = NearDepth(s);
     sh.pkey = Hash(&pk, sizeof(pk)) ^ (sh.near_depth ? kNearDepthSalt : 0);
     EnsurePixelShader(pk, sh);

@@ -33,6 +33,8 @@ struct VOut {
     float4 tc2 : TEXCOORD2;
     float4 tc3 : TEXCOORD3;
     float fogamt : TEXCOORD4;
+    // a point's centre in console pixels and its size in them: a sprite's coordinates are measured from it
+    nointerpolation float4 spr : TEXCOORD6;
     // w: with the near and far planes left unclipped (depth clamp) what is behind the eye is still cut away
     float behind : SV_ClipDistance0;
 };
@@ -64,6 +66,8 @@ const char* kCommonTail = R"(    float4 spread[4];
     float4 wide;
     float4 widetc;
     float4 widec;
+    float4 ptsz;
+    float4 ptscale;
 };
 // widescreen: a squeezed draw reading the frame (a shadow or glow drawn into it, read back where its own vertices land)
 // reads where it now is, its x squeezed by k about the frame's middle c as the position's was, before the divide when
@@ -115,6 +119,18 @@ float fogfactor(float d) {
     if (fogp.w == 1) return exp(-d * fogp.z);
     if (fogp.w == 2) return exp(-(d * fogp.z) * (d * fogp.z));
     return 1;
+}
+// the fixed function's point size: D3DRS_POINTSIZE, scaled with distance from the eye under POINTSCALEENABLE as
+// Vh * size * sqrt(1 / (A + B * d + C * d^2)), held to POINTSIZE_MIN and MAX
+float ffpointsize(float d) {
+    float s = ptsz.x;
+    if (ptsz.w != 0) s *= ptscale.w * sqrt(1 / max(ptscale.x + ptscale.y * d + ptscale.z * d * d, 1e-6));
+    return clamp(s, ptsz.y, max(ptsz.z, ptsz.y));
+}
+// a point's centre in console pixels from its clip position, and its size
+float4 pointsprite(float4 q, float size) {
+    float2 n = q.xy / q.w;
+    return float4((n.x * 0.5 + 0.5) * surf.x, (0.5 - n.y * 0.5) * surf.y, max(size, 0), 0);
 }
 )";
 
@@ -278,6 +294,7 @@ const char* kVsEpilogue = R"(
         o.tc2 = WideTc(oT2, widetc.z, widec.z);
         o.tc3 = WideTc(oT3, widetc.w, widec.w);
     }
+    o.spr = pointsprite(q, oPts.x);
     o.fogamt = fogfactor(oFog.x);
     return o;
 }
@@ -915,7 +932,8 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
         s += "    }\n";
     }
     s += "    oFog = " + v(5, "float4(0,0,0,0)") + ";\n";
-    if (pretransformed) return s + kVsEpilogue;
+    // screen space points take D3DRS_POINTSIZE as it is: the scale is for points at a distance from the eye
+    if (pretransformed) return s + "    oPts.x = clamp(ptsz.x, ptsz.y, max(ptsz.z, ptsz.y));\n" + kVsEpilogue;
     s += R"(
     VOut o;
     // like the pretransformed ones, target sized passes end half a console pixel short of the far edges
@@ -944,6 +962,7 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
         o.tc2 = WideTc(oT2, widetc.z, widec.z);
         o.tc3 = WideTc(oT3, widetc.w, widec.w);
     }
+    o.spr = pointsprite(cp, ffpointsize(length(vp)));
     o.fogamt = fogfactor(abs(cp.z));
     return o;
 }
@@ -961,6 +980,12 @@ std::string PixelHlsl(const PixelKey& k) {
     }
     s += F("float4 main(VOut i, bool front : SV_IsFrontFace) : SV_Target {\n");
     s += "    float4 tc0 = i.tc0, tc1 = i.tc1, tc2 = i.tc2, tc3 = i.tc3;\n";
+    // a point sprite: the console gives texture stage 3 alone its 0..1 across the point, from the top left. The
+    // fragment's host pixel back in console pixels (hostscale.x per one) against the centre the vertex shader kept
+    if (k.sprite) {
+        s += "    tc3 = float4((i.pos.xy / max(hostscale.x, 1e-6) - i.spr.xy) / max(i.spr.z, 1e-3) + 0.5, 0, 1);\n";
+        if (k.tex[3].rect) s += "    tc3.xy *= texsize[3].xy;\n";
+    }
     s += k.two_sided ? "    float4 v0 = front ? i.d0 : i.b0, v1 = front ? i.d1 : i.b1;\n" : "    float4 v0 = i.d0, v1 = i.d1;\n";
     s += "    if (misc.w == 0) v1 = float4(0, 0, 0, 1);\n";
     s += "    float4 fogin = float4(fogcolor.rgb, saturate(i.fogamt));\n";

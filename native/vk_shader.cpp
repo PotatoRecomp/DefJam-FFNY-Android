@@ -22,7 +22,7 @@ std::mutex g_lock;
 bool g_clip_distance = true;
 bool g_point_size = false;
 // bumped when the translation below changes, so older cached modules are not used
-constexpr uint32_t kCacheVersion = 3;
+constexpr uint32_t kCacheVersion = 4;
 
 struct Param {
     std::string type, name;
@@ -108,13 +108,14 @@ std::string Adapt(const std::string& hlsl, Stage stage) {
         static const std::regex write(R"(\n[ \t]*o\.behind = [^;]*;)");
         s = std::regex_replace(s, write, "");
     }
-    // the game's vertex shaders (the ones with a fog output) give points their size; the passes draw no points
+    // the game's vertex shaders (the ones with a fog output) give points their size, the console pixels VOut::spr
+    // carries in host pixels (hostscale.x per one); the passes draw no points
     if (stage == Stage::Vertex && g_point_size) {
         static const std::regex member(R"((\n[ \t]*)(float fogamt : TEXCOORD4;))");
         static const std::regex write(R"((\n[ \t]*)(o\.fogamt = [^;]*;))");
         // glslang reads no semantic as the point size: the builtin is named
         s = std::regex_replace(s, member, "$1$2$1[[vk::builtin(\"PointSize\")]] float psize : PSIZE;");
-        s = std::regex_replace(s, write, "$1$2$1o.psize = 1;");
+        s = std::regex_replace(s, write, "$1$2$1o.psize = max(o.spr.z * hostscale.x, 1);");
     }
     // the vertex inputs at the location of their register, ATTRn: the pipeline's attributes are numbered so
     static const std::regex attr(R"((\n[ \t]*)(\w+ v\d+ : ATTR(\d+);))");

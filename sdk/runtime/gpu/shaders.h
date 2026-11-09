@@ -36,6 +36,7 @@ struct PixelKey {
     uint32_t quad = 0;       // a screen quad: QuadHlsl
     uint32_t colorkey = 0;   // D3DTSS_COLORKEYOP of each 2D stage, 2 bits per stage (DrawConstants::ckey)
     uint32_t alphatest = 0;  // alpha test on: only then may the shader discard, which turns off early depth tests
+    uint32_t sprite = 0;     // a point list with D3DRS_POINTSPRITEENABLE: stage 3 reads 0..1 across the point
     bool operator==(const PixelKey& o) const;
 };
 
@@ -114,6 +115,8 @@ struct DrawConstants {
                          // draw; z the 3D view's widening in the shader, 0 as the camera hook does it; w unused
     float widetc[4];     // per stage, a squeezed 3D draw reading the frame: its coordinates squeezed as well, 0 not
     float widec[4];      // per stage, the coordinate of the frame's middle the squeeze is about (0.5, or texels)
+    float ptsz[4];       // D3DRS_POINTSIZE, POINTSIZE_MIN, POINTSIZE_MAX in console pixels, w 1 with POINTSCALEENABLE
+    float ptscale[4];    // D3DRS_POINTSCALE_A, B, C, then the viewport's height in console pixels
 };
 
 }  // namespace gpu
