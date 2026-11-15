@@ -36,6 +36,9 @@ namespace touch {
 void Init();
 // what the fingers hold: input::Pad::buttons bits, a bit per analog button held, the sticks -1 to 1 with y up
 void Set(uint32_t buttons, uint32_t analog, float lx, float ly, float rx, float ry);
+// a macro button pressed (hard punch, hard kick, hard grab): its run starts at the next Apply, unless
+// one is still running
+void Macro(int index);
 void Swipe(float dx, float dy);  // the right stick swiped by a drag, as a share of a full push; eases out in Apply
 // the layout, each control's centre as a fraction of the screen and its size as a fraction of its kind's: read from
 // the settings file's table before the first frame, written back into it

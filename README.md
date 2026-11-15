@@ -55,15 +55,27 @@ staying for the panel. A controller some phones' game services hand over as a vi
 and plays port 1 all the same (`native/loose.cpp`). A keyboard works as port 1's pad (keys in
 `src/common/keyboard.cpp`).
 
+This custom build also supports a broken right stick on gamepads: hold **LT + RT** with the Blazin meter ready to
+activate Blazin. While Blazin is active and your fighter is holding an opponent, hold **LT + RT** and press one
+**D-pad direction** to select its right-stick move. All four Story Mode move assignments are preserved. Release the
+D-pad before selecting another move; diagonal/opposing directions select none. The shortcut consumes the triggers
+and D-pad during activation or a Blazin grab, and waits for the game's move-selection window. Elsewhere they work
+normally. It applies to all four SDL controller ports and the Android virtual controller on port 1; touch and
+keyboard controls keep their existing mapping.
+
 The on-screen controls are the Xbox pad's, where the pad has them: the left stick, the **A B X Y** diamond, White and
 Black above it, the triggers, the stick clicks, the D-pad, START and BACK, and the right stick under a finger on the
-right. They are thin light outlines with next to no backing, so the fight shows through. The face buttons carry the
-pad's letters in its colours and the triggers their names: a fighter's moves depend on the stance and what is held with
-them, so no single icon says what a button does. They are an Android view over the game (`TouchControls.java`) that
+right. Each is a flat see-through dark disc with a thin white rim and the button's action as a clean white outline
+icon, drawn from plain paths (a boxing glove for punch, a sneaker for kick, an open hand for grab, a dash for run, a
+shield for block, a bolt for hard), with the pad's button small and faint under it. Held, a control lightens. They are an Android view over the game (`TouchControls.java`) that
 draws each control from an image, normal and held (`res/drawable-nodpi/ctl_*.png`, made by `tools/controls_art.py`),
 and sends what the fingers hold to the game over JNI (`native/touch.cpp`): the game's thread draws nothing for them.
 The **gear**, top middle, opens the settings panel; **Move controls** in it places each control, and a size bar there
 sizes the one last taken, 50 to 150%.
+
+A row of three macro buttons under RT runs a whole move per tap, the inputs the tutorial teaches: **HARD PUNCH**
+(LT + Y), **HARD KICK** (LT + X) and **HARD GRAB** (LT + A). LT goes down a moment before the button it modifies. A tap while one is running is
+ignored. The timings are `kMacros` in `native/touch.cpp`; they can be moved and sized like the other controls.
 
 ## Threads
 

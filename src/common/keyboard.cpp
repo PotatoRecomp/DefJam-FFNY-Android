@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "core/input.h"
+#include "common/blazing.h"
+#include "loose.h"
 #include "host.h"
 
 namespace game {
@@ -121,6 +123,8 @@ void Keyboard(input::Pad& p) {
 
 // GameInfo::pad: the keyboard and the on-screen controls on port 1
 void PadHook(int port, input::Pad& p) {
+    if (port == 0) loose::Merge(p);
+    BlazingPad(port, p);
     if (port != 0) return;
     Keyboard(p);
     touch::Apply(p);

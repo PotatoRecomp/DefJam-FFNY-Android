@@ -23,15 +23,18 @@ class TouchControls extends View {
     // native/touch.cpp: what the fingers hold, and the layout
     private static native void nativeTouchPad(int buttons, int analog, float lx, float ly, float rx, float ry);
     private static native void nativeTouchSwipe(float dx, float dy);
+    private static native void nativeTouchMacro(int index);
     private static native float[] nativeControls();
     private static native void nativeControlSet(int unit, float x, float y, float scale, boolean commit);
     private static native void nativeControlsReset();
 
     // the layout's controls, in native/touch.cpp's Unit order
     static final int STICK = 0, A = 1, B = 2, X = 3, Y = 4, DPAD = 5, START = 6, BACK = 7, LT = 8, RT = 9, L3 = 10,
-            R3 = 11, GEAR = 12, WHITE = 13, BLACK = 14, RSTICK = 15, UNITS = 16;
+            R3 = 11, GEAR = 12, WHITE = 13, BLACK = 14, RSTICK = 15, HARD_PUNCH = 16, HARD_KICK = 17,
+            HARD_GRAB = 18, UNITS = 19;
     static final String[] NAMES = {"STICK", "A (GRAB)", "B (RUN)", "X (KICK)", "Y (PUNCH)", "D-PAD", "START", "BACK", "LT (HARD)", "RT (BLOCK)", "L3", "R3",
-            "SETTINGS", "WHITE (TARGET)", "BLACK", "RIGHT STICK"};
+            "SETTINGS", "WHITE (TARGET)", "BLACK", "RIGHT STICK", "HARD PUNCH", "HARD KICK",
+            "HARD GRAB"};
 
     // the pad's buttons as input::Pad has them: the digital ones' bits, and the analog ones' places
     private static final int UP = 1, DOWN = 1 << 1, LEFT = 1 << 2, RIGHT = 1 << 3, BIT_START = 1 << 4,
@@ -45,10 +48,12 @@ class TouchControls extends View {
     private static final int[] FACE_ANALOG = {AN_A, AN_B, AN_X, AN_Y};
     private static final int[] ARROW_BIT = {UP, DOWN, LEFT, RIGHT};
     private static final float[][] DIRS = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
+    // the macro buttons, in native/touch.cpp's kMacros order: a press runs the whole move there
+    private static final int[] MACRO = {HARD_PUNCH, HARD_KICK, HARD_GRAB};
 
     // what a finger is doing
     private static final int NONE = -1, ROLE_STICK = 0, ROLE_CAMERA = 1, ROLE_GEAR = 2, ROLE_FACE = 10,
-            ROLE_ROUND = 20, ROLE_ARROW = 30;
+            ROLE_ROUND = 20, ROLE_ARROW = 30, ROLE_MACRO = 40;
 
     // the panel's RIGHT STICK
     private static final int FLOATING = 0, FIXED = 1, SWIPE = 2;
@@ -79,6 +84,7 @@ class TouchControls extends View {
     private final float[] fx = new float[MAX], fy = new float[MAX], ox = new float[MAX], oy = new float[MAX];
     private int fingers;
     private int buttons, analog;
+    private int macros;  // a bit per macro button a finger holds, for drawing it held
     private float lx, ly, rx, ry;
     private boolean camHeld;
     private float camX, camY;  // the floating right stick's middle while a finger holds it
@@ -131,7 +137,7 @@ class TouchControls extends View {
     void releaseAll() {
         fingers = 0;
         camHeld = false;
-        buttons = analog = 0;
+        buttons = analog = macros = 0;
         lx = ly = rx = ry = 0;
         send();
         invalidate();
@@ -224,6 +230,9 @@ class TouchControls extends View {
             {START, R.drawable.ctl_start, R.drawable.ctl_start_on}, {BACK, R.drawable.ctl_back, R.drawable.ctl_back_on},
             {LT, R.drawable.ctl_lt, R.drawable.ctl_lt_on}, {RT, R.drawable.ctl_rt, R.drawable.ctl_rt_on},
             {GEAR, R.drawable.ctl_gear, R.drawable.ctl_gear_on}, {WHITE, R.drawable.ctl_white, R.drawable.ctl_white_on},
+            {HARD_PUNCH, R.drawable.ctl_hard_punch, R.drawable.ctl_hard_punch_on},
+            {HARD_KICK, R.drawable.ctl_hard_kick, R.drawable.ctl_hard_kick_on},
+            {HARD_GRAB, R.drawable.ctl_hard_grab, R.drawable.ctl_hard_grab_on},
         };
         for (int[] e : ids) {
             if (e[1] == 0) continue;
@@ -286,6 +295,10 @@ class TouchControls extends View {
             boolean on = ROUND_BIT[i] != 0 ? (buttons & ROUND_BIT[i]) != 0 : (analog & (1 << ROUND_ANALOG[i])) != 0;
             control(c, art[u], on, cx(u), cy(u), radius(u));
         }
+        for (int i = 0; i < MACRO.length; i++) {
+            int u = MACRO[i];
+            control(c, art[u], (macros & (1 << i)) != 0, cx(u), cy(u), radius(u));
+        }
         if (editing) drawEditor(c);
     }
 
@@ -309,6 +322,8 @@ class TouchControls extends View {
         if (in(x, y, cx(GEAR), cy(GEAR), radius(GEAR) * 1.1f)) return GEAR;
         for (int u : ROUND)
             if (in(x, y, cx(u), cy(u), radius(u) * 1.15f)) return u;
+        for (int u : MACRO)
+            if (in(x, y, cx(u), cy(u), radius(u) * 1.15f)) return u;
         for (int u = A; u <= Y; u++)
             if (in(x, y, cx(u), cy(u), radius(u))) return u;
         if (in(x, y, cx(DPAD), cy(DPAD), radius(DPAD) * 2.6f)) return DPAD;
@@ -324,6 +339,8 @@ class TouchControls extends View {
             if (in(x, y, cx(A + i), cy(A + i), radius(A + i) * 1.15f)) return ROLE_FACE + i;
         for (int i = 0; i < ROUND.length; i++)
             if (in(x, y, cx(ROUND[i]), cy(ROUND[i]), radius(ROUND[i]) * 1.15f)) return ROLE_ROUND + i;
+        for (int i = 0; i < MACRO.length; i++)
+            if (in(x, y, cx(MACRO[i]), cy(MACRO[i]), radius(MACRO[i]) * 1.15f)) return ROLE_MACRO + i;
         for (int a = 0; a < 4; a++)
             if (in(x, y, arrowX(a), arrowY(a), radius(DPAD) * 1.1f)) return ROLE_ARROW + a;
         float w = getWidth();
@@ -384,6 +401,9 @@ class TouchControls extends View {
             camX = x;
             camY = y;
             camHeld = true;
+        } else if (role >= ROLE_MACRO) {
+            macros |= 1 << (role - ROLE_MACRO);
+            nativeTouchMacro(role - ROLE_MACRO);
         } else if (role >= ROLE_ARROW) buttons |= ARROW_BIT[role - ROLE_ARROW];
         else if (role >= ROLE_ROUND) press(role - ROLE_ROUND, true);
         else if (role >= ROLE_FACE) analog |= 1 << FACE_ANALOG[role - ROLE_FACE];
@@ -436,6 +456,8 @@ class TouchControls extends View {
                 // a swipe's turn eases out in native, as the flick it was; a stick held lets go at once
                 rx = ry = 0;
                 camHeld = false;
+            } else if (role >= ROLE_MACRO) {
+                macros &= ~(1 << (role - ROLE_MACRO));
             } else if (role >= ROLE_ARROW) {
                 buttons &= ~ARROW_BIT[role - ROLE_ARROW];
             } else if (role >= ROLE_ROUND) {

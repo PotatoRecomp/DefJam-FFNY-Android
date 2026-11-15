@@ -57,12 +57,12 @@ public:
     // A thread that cannot have the lock within kPatience goes on without it, so the lock can never freeze the game:
     // locks the runtime takes in between (the dispatch level's) could otherwise wait on each other for ever. Without
     // it the call meets the library's own busy flag and returns busy, as on the console. False: not taken.
-    bool lock() {
+    bool lock(bool strict = false) {
         if (owner_.load() == std::this_thread::get_id()) {
             depth_++;
             return true;
         }
-        if (!m_.try_lock_for(kPatience)) return false;
+        if (!m_.try_lock_for(strict ? kStrictPatience : kPatience)) return false;
         take(1);
         return true;
     }
@@ -231,6 +231,27 @@ SERIALIZED(001E8340)
 SERIALIZED(001E83D0)
 SERIALIZED(001E8600)
 SERIALIZED(001E87B0)
+// The streams' read completions: 0x1E7750 and 0x1E7720 (passed to 0x1E55D0 by 0x1E7750 and 0x1E7790) and 0x1E7FB0
+// (by 0x1E8080). A read already done runs its callback at once, inside a locked caller; one still pending has it run
+// later by the file system's completion (0x1E52C0, 0x1E5FF0) on its own thread, with no lock. There 0x1E8080 walks the
+// read pointer and unlinks and recycles the ring's records while the reader, holding the lock, follows them: the
+// reader then takes a record of null and reads guest address 4 at 0x1E7DAB (signal 11 on thread 14 while loading,
+// logged on a vivo I2218). Serialized with the streams; as the reader, they wait the strict patience for the lock,
+// since one run without it is the race again.
+#define SERIALIZED_STRICT(addr)                                                                                     \
+    X86_EXTERN_FUNC(__imp__sub_##addr);                                                                             \
+    X86_FUNC(sub_##addr) {                                                                                          \
+        const bool held = g_resource_lock.lock(true);                                                               \
+        if (!held) LOGW("stream lock: " #addr " ran without the lock, held by %s", g_resource_lock.Holder().c_str()); \
+        const bool outer = t_strict;                                                                                \
+        t_strict = true;                                                                                            \
+        __imp__sub_##addr(ctx, base);                                                                               \
+        t_strict = outer;                                                                                           \
+        if (held) g_resource_lock.unlock();                                                                         \
+    }
+SERIALIZED_STRICT(001E7720)
+SERIALIZED_STRICT(001E7750)
+SERIALIZED_STRICT(001E7FB0)
 
 // The buffer rings' deferred release queue: a count at 0x3A9680 and 8 byte entries from 0x3A9684 (a word, 1 for a
 // stream record, the ring's index, then the record). 0x126150 and 0x1262B0 append (write the entry at the count, then

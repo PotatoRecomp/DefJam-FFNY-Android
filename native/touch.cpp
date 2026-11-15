@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 
 #include "app/app.h"
@@ -33,7 +34,8 @@ std::atomic<int> g_pad{-1};           // a controller is plugged in, as the over
 // These are the pad's own layout, what a fresh install gets and what the editor's RESET puts back.
 enum Unit : int {
     kUnitStick, kUnitA, kUnitB, kUnitX, kUnitY, kUnitDpad, kUnitStart, kUnitBack, kUnitLT, kUnitRT, kUnitL3, kUnitR3,
-    kUnitGear, kUnitWhite, kUnitBlack, kUnitRStick, kUnitCount  // the later ones last, so an older saved layout keeps its places
+    kUnitGear, kUnitWhite, kUnitBlack, kUnitRStick, kUnitHardPunch, kUnitHardKick, kUnitHardGrab,
+    kUnitCount  // the later ones last, so an older saved layout keeps its places
 };
 struct Point {
     float x, y;
@@ -55,6 +57,9 @@ constexpr Point kDefaultUnits[kUnitCount] = {
     {0.812f, 0.430f},  // White: the pad's small pair, over the diamond's top corners
     {0.898f, 0.430f},  // Black
     {0.640f, 0.700f},  // the fixed right stick, between the stick clicks and the diamond
+    {0.740f, 0.270f},  // the macros, a row under RT: hard punch
+    {0.820f, 0.270f},  // hard kick
+    {0.900f, 0.270f},  // hard grab
 };
 // the places a fresh install had before the diamond was spread: a saved layout with a unit still on its old place
 // never moved it, and takes the new one
@@ -79,6 +84,50 @@ std::array<float, kUnitCount> g_scale = [] {
 // the panel's RIGHT STICK swipe: a drag turns the view, as a stick pushed for a moment
 bool Swiping() { return game::Opt().camera_mode == 2; }
 
+// The macro buttons: each a timed run of pad states, as the tutorial teaches them (the game's own text): "PULL [l] AND
+// PRESS [P] OR [K] TO THROW HARD ATTACKS" and "PULL [l] AND PRESS [G] TO HARD GRAPPLE OPPONENT". LT goes down a step
+// before the button it modifies, so the game sees it held on the button's press.
+constexpr uint8_t kA = 1 << 0, kX = 1 << 2, kY = 1 << 3, kLT = 1 << 6;  // input::Pad::analog places
+struct Step {
+    int ms;
+    uint8_t analog;
+};
+constexpr Step kHardPunch[] = {{50, kLT}, {120, kLT | kY}, {60, 0}};
+constexpr Step kHardKick[] = {{50, kLT}, {120, kLT | kX}, {60, 0}};
+constexpr Step kHardGrab[] = {{50, kLT}, {120, kLT | kA}, {60, 0}};
+struct Macro {
+    const Step* steps;
+    size_t count;
+};
+constexpr Macro kMacros[] = {{kHardPunch, std::size(kHardPunch)},
+                             {kHardKick, std::size(kHardKick)},
+                             {kHardGrab, std::size(kHardGrab)}};
+std::atomic<int> g_macro_request{-1};  // a macro button pressed, for the next Apply; -1 none
+int g_macro = -1;                      // the one running, Apply's alone
+std::chrono::steady_clock::time_point g_macro_start;
+
+// the pad state of the running macro now, nothing once it has run out
+bool MacroStep(Step& out) {
+    using namespace std::chrono;
+    const auto now = steady_clock::now();
+    if (int req = g_macro_request.exchange(-1); req >= 0 && g_macro < 0) {
+        g_macro = req;
+        g_macro_start = now;
+    }
+    if (g_macro < 0) return false;
+    int t = int(duration_cast<milliseconds>(now - g_macro_start).count());
+    const Macro& m = kMacros[g_macro];
+    for (size_t i = 0; i < m.count; i++) {
+        if (t < m.steps[i].ms) {
+            out = m.steps[i];
+            return true;
+        }
+        t -= m.steps[i].ms;
+    }
+    g_macro = -1;
+    return false;
+}
+
 }  // namespace
 
 void Init() { LOGI("touch: on-screen controls, drawn by the activity's overlay"); }
@@ -90,6 +139,10 @@ void Set(uint32_t buttons, uint32_t analog, float lx, float ly, float rx, float 
     g_ly = std::clamp(ly, -1.0f, 1.0f);
     g_rx = std::clamp(rx, -1.0f, 1.0f);
     g_ry = std::clamp(ry, -1.0f, 1.0f);
+}
+
+void Macro(int index) {
+    if (index >= 0 && index < int(std::size(kMacros))) g_macro_request = index;
 }
 
 void Swipe(float dx, float dy) {
@@ -120,8 +173,12 @@ void Apply(input::Pad& pad) {
         g_sx = std::fabs(sx) < 0.02f ? 0.0f : sx * 0.8f;
         g_sy = std::fabs(sy) < 0.02f ? 0.0f : sy * 0.8f;
     }
-    // a controller the phone took over comes in over the top of both
-    loose::Merge(pad);
+    Step step{};
+    if (MacroStep(step)) {
+        pad.connected = true;
+        for (int i = 0; i < 8; i++)
+            if (step.analog & (1u << i)) pad.analog[i] = 0xFF;
+    }
 }
 
 void Frame() {

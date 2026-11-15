@@ -159,6 +159,10 @@ extern "C" JNIEXPORT void JNICALL Java_com_datfooldive_defjam_TouchControls_nati
     touch::Swipe(dx, dy);
 }
 
+extern "C" JNIEXPORT void JNICALL Java_com_datfooldive_defjam_TouchControls_nativeTouchMacro(JNIEnv*, jclass, jint index) {
+    touch::Macro(index);
+}
+
 // their layout: x, y and size for each control in touch.cpp's Unit order
 extern "C" JNIEXPORT jfloatArray JNICALL Java_com_datfooldive_defjam_TouchControls_nativeControls(JNIEnv* env, jclass) {
     const int n = touch::Units();
